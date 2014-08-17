@@ -41,7 +41,7 @@ Set myShell = CreateObject("WScript.Shell")
 cmd = myShell.ExpandEnvironmentStrings("%comspec%")
 tmpDir = myShell.ExpandEnvironmentStrings("%TEMP%")
 Select Case WScript.Arguments.Item(0)
-    Case "cleanup"
+    Case "exit"
 	myShell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace where ""Name like 'OUTPUT_READY'"" delete")
 	myShell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace where ""Name like '%EVILTAG%'"" delete")
     Case Else
