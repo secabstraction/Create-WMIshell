@@ -41,7 +41,7 @@ End Function
 Function insertPiece(ByVal number,ByVal piece)
 	count = CStr(number)
 	zeros = String(6 - Len(count), "0")
-	tag = "SKULLTAG" + zeros + count
+	tag = "EVILTAG" + zeros + count
 	piece = encode(piece)
 	piece = Replace(piece,"+","Ó")
 	piece = Replace(piece,"/","_")
