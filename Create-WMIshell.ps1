@@ -30,7 +30,7 @@ Author : Jesse "RBOT" Davis
 .LINK
 #>
         $getOutput = @() 
-        $getOutput = gwmi -Credential $Credential -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'SKULLTAG%'" | Select-Object Name
+        $getOutput = gwmi -Credential $Credential -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILTAG%'" | Select-Object Name
         
         if ([BOOL]$getOutput.Length) {
 
