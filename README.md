@@ -1,0 +1,1 @@
+I always try to think about how I might get something done by leveragin WMI, since it's usually always on and available. When I read that somebody had beat me to the punch I decided to start writing a powershell implementation. Once I polish it up a bit more I'll write a better README for it, but here's the first rough hack at it.
