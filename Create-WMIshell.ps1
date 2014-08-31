@@ -328,7 +328,3 @@ Author : Jesse "RBOT" Davis
 
     }
 }
-#End END
- #End Enum-Adapter funcion
-
-#Enum-Adapter -ComputerName localhost,localhost,127.0.0.1 -Ping -TXT
