@@ -1,4 +1,4 @@
-﻿function New-WmiShell{
+function New-WmiShell{
 <#
 .SYNOPSIS
 Setup interactive shell on a remote host leveraging the WMI service and a VBScript.
@@ -71,9 +71,9 @@ Author : Jesse "RBOT" Davis
 			$vbsName = [System.IO.Path]::GetRandomFileName() + ".vbs"
 			
 			#Grab some data about the host, validation of WMI accessibility
-			$os = gwmi -ComputerName $name -Credential $creds -Class Win32_OperatingSystem
-			$comp = gwmi -ComputerName $name -Credential $creds -Class Win32_ComputerSystem
-			#$env = gwmi -Credential $creds -Class Win32_Environment -ComputerName $computer
+			$os = Get-WmiObject -ComputerName $name -Credential $creds -Class Win32_OperatingSystem
+			$comp = Get-WmiObject -ComputerName $name -Credential $creds -Class Win32_ComputerSystem
+			#$env = Get-WmiObject -Credential $creds -Class Win32_Environment -ComputerName $computer
 			
 			$props = @{
 				'HostName' = $os.CSName;
@@ -127,8 +127,11 @@ Author : Jesse "RBOT" Davis
 			iwmi -ComputerName $computer.ComputerName -Credential $computer.Credentials -Class win32_process -Name create -ArgumentList $cScript | Out-Null
             
             # Wait for vbScrpit to finish writing output to WMI namespaces
-            $outputReady = [NullString]::Value
-            do{$outputReady = gwmi -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
+            Try { $outputReady = [NullString]::Value }
+			         Catch [System.Management.Automation.RuntimeException]
+			             { $outputReady = "" }
+			    Finally {}
+            do{$outputReady = Get-WmiObject -ComputerName $computer.ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
             until($outputReady)
 
 			Get-WmiShellOutput -UserName $computer.Credentials -ComputerName $computer.ComputerName -Encoding $computer.Encoding
@@ -185,7 +188,10 @@ function Enter-WmiShell{
         }
 
         # Drop into WmiShell prompt
-        $command = [NullString]::Value
+        Try { $command = [NullString]::Value }
+		     Catch [System.Management.Automation.RuntimeException]
+			     { $command = "" }
+	    Finally {}
         Clear-Host
         $a = (Get-Host).UI.RawUI
         $a.BackgroundColor = "black"
@@ -203,8 +209,12 @@ function Enter-WmiShell{
             if ($command -ne "exit") {
 
                 # Wait for vbScrpit to finish writing output to WMI namespaces
-                $outputReady = [NullString]::Value
-                do{$outputReady = gwmi -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
+                Try { $outputReady = [NullString]::Value }
+			         Catch [System.Management.Automation.RuntimeException]
+			             { $outputReady = "" }
+			    Finally {}
+
+                do{$outputReady = Get-WmiObject -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
                 until($outputReady)
 
                 # Retrieve cmd output written to WMI namespaces 
@@ -266,7 +276,7 @@ Author : Jesse "RBOT" Davis
 	) #End Param
 	
 	$getOutput = @()
-	$getOutput = gwmi -Credential $UserName -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | Select-Object Name
+	$getOutput = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | Select-Object Name
 	
 	if ([BOOL]$getOutput.Length) {
 		
