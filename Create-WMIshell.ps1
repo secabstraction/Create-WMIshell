@@ -310,7 +310,7 @@ Author : Jesse "RBOT" Davis
 			foreach ($line in $sortStrings) {
 				
 				$cleanString = $line.Reomve(0, 15)
-                $cleanString.Split(“_“) | foreach { Write-Host -object ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) -NoNewline }
+                $cleanString.Split('_') | foreach { Write-Host -object ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) -NoNewline }
 			}
 		}
 		
@@ -333,7 +333,7 @@ Author : Jesse "RBOT" Davis
         else {
             $getStrings = $getOutput.Name
             $cleanstring = $getStrings.Remove(0,15)
-            $cleanString.Split(“_“) | foreach { Write-Host -object ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) -NoNewline }
+            $cleanString.Split('_') | foreach { Write-Host -object ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) -NoNewline }
         }
 
     }
