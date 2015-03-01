@@ -1,1 +1,16 @@
-I always try to think about how I might get something done by leveraging WMI, since it's usually always on and available. When I read that somebody had beat me to the punch I decided to start writing a powershell implementation. Once I polish it up a bit more I'll write a better README for it, but here's the first rough hack at it.
+Getting Started
+===============
+1. Navigate to the directory containing Create-WmiShell.ps1 and the 2 VB scripts
+2. Import-Module .\Create-WmiShell.ps1
+3. New-WmiShell -ComputerName <hostname or IP> -UserName <Domain\Administrator> -UploadTo <file path> -Encoding <Base64 or Hex>
+4. List-WmiShells
+5. Enter-WmiShell -Session <# from List-WmiShells>
+
+When creating a new wmishell, you can start powershell with the runas.exe command and skip the -UserName parameter.
+
+TODOs
+===============
+1. Test functionality against (multiple) target host file
+2. Better implementation of List-WmiShells function
+3. Write Close-WmiShell function
+4. Maybe make the hex encoding a little sneakier

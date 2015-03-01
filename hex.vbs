@@ -5,17 +5,10 @@ function hexEn(str)
 		strEncoded = strEncoded + "_" + Hex(Asc(Mid(str, i, 1)))
 	next
 	hexEn = strEncoded
-end function
-function prepare(byVal strIn)
-    If Len(strIn) = 0 Then
-        prepare = 0 : Exit function
-    Else
-        prepare = Asc(strIn)
-    End If
 End function
-function parseCmdOutput(cmdOutput)
+Function parseCmdOutput(cmdOutput)
 	strLen = Len(cmdOutput)
-	pieceLen = 5500
+	pieceLen = 2500
 	nbOfPieces = Int(strLen/pieceLen)
 	For i = 1 to nbOfPieces
 		piece = Left(cmdOutput,pieceLen)
@@ -25,7 +18,7 @@ function parseCmdOutput(cmdOutput)
 	Next
 	cmdOutput = "        " + cmdOutput + "        "
 	insertPiece nbOfPieces+1,cmdOutput		
-End function
+End Function
 function insertPiece(ByVal number,ByVal piece)
 	count = CStr(number)
 	zeros = String(6 - Len(count), "0")
@@ -37,7 +30,6 @@ function insertPiece(ByVal number,ByVal piece)
         WScript.Sleep 50
 End function
 Set myShell = CreateObject("WScript.Shell")
-cmd = myShell.ExpandEnvironmentStrings("%comspec%")
 tmpDir = myShell.ExpandEnvironmentStrings("%TEMP%")
 Select Case WScript.Arguments.Item(0)
     Case "exit"
@@ -49,5 +41,5 @@ Select Case WScript.Arguments.Item(0)
 	set cmdExecution = myShell.exec("%comspec% /c " + WScript.Arguments.Item(0)) 
 	cmdOutput = cmdExecution.StdOut.ReadAll 
 	parseCmdOutput cmdOutput 
-	myShell.Exec("wmic /NAMESPACE:\\root\default PATH __Namespace CREATE Name='OUTPUT_READY'")
+	myShell.Exec("wmic.exe /NAMESPACE:\\root\default PATH __Namespace CREATE Name='OUTPUT_READY'")
 End Select

