@@ -1,15 +1,23 @@
-﻿function New-WmiSession {
+function New-WmiSession {
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string[]]$ComputerName,
+    [string[]]
+    $ComputerName,
+    
     [Parameter()]
     [ValidateNotNull()]
     [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
     [Parameter()]
-    [string]$Namespace = "default",
+    [string]
+    $Namespace = "root\default",
+    
     [Parameter()]
-    [string]$Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4)
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4)
+
 ) # End Param
 
 #Check for existence of WMI Namespace specified by user
@@ -32,22 +40,33 @@ New-Object -TypeName PSObject -Property $props
 }
 
 function Invoke-WmiCommand {
-
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string[]]$ComputerName,
+    [string[]]
+    $ComputerName,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
     [ValidateNotNull()]
     [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Namespace = "default",
+    [string]
+    $Namespace = "root\default",
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    
     [Parameter()]
-    [switch]$Posh,
+    [switch]
+    $Posh,
+    
     [Parameter()]
-    [switch]$Cmd
+    [switch]
+    $Cmd
+
 ) # End Param
 
     $remoteScript = @"
@@ -165,54 +184,135 @@ Param (
         }until($command -eq "exit")
 }
 
-function Insert-Piece($i, $piece) {
-    $count = $i.ToString()
-	$zeros = "0" * (6 - $count.Length)
-	$tag = $Tag + $zeros + $count
-	$piece = $tag + $piece 
-	$null = Set-WmiInstance -ComputerName $ComputerName -Credential $UserName -EnableAllPrivileges -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=$piece}
+function Upload-Piece {
+Param (	
+    [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [string[]]
+    $ComputerName,
+
+    [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [ValidateNotNull()]
+    [System.Management.Automation.PSCredential]
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
+    [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [string]
+    $Namespace = "root\default",
+    
+    [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+
+    [Parameter()]
+    [string]
+    $Piece,
+
+    [Parameter()]
+    [int]
+    $Count
+
+) # End Param
+
+    $Count = $Count.ToString()
+	$Zeros = "0" * (6 - $Count.Length)
+	$Tag = $Tag + $Zeros + $Count
+	$Piece = $Tag + $Piece 
+	$null = Set-WmiInstance -ComputerName $ComputerName -Credential $UserName -EnableAllPrivileges -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=$Piece}
 }
 
 function Upload-WmiFile {
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string[]]$ComputerName,
+    [string[]]
+    $ComputerName,
+
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
     [ValidateNotNull()]
     [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Namespace = "default",
+    [string]
+    $Namespace = "root\default",
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    
     [Parameter(Mandatory = $True)]
-    [string]$LocalPath,
+    [string]
+    $LocalPath,
+    
     [Parameter(Mandatory = $True)]
-    [string]$RemoteDestination
+    [string]
+    $RemoteDestination
+
 ) #End Param
 
-$bytes = [System.IO.File]::ReadAllBytes($file)
-$encfile = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($Path))
+    $encFile = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($LocalPath))
+    $outEnc = $encFile -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
+    $nop = [Math]::Floor($outEnc.Length / 5500)
+    if ($outEnc.Length -gt 5500) {
+        $lastp = $outEnc.Substring($outEnc.Length - ($outEnc.Length % 5500), ($outEnc.Length % 5500))
+        $outEnc = $outEnc.Remove($outEnc.Length - ($outEnc.Length % 5500), ($outEnc.Length % 5500))
+        for($i = 1; $i -le $nop; $i++) { 
+	        $piece = $outEnc.Substring(0,5500)
+		    $outEnc = $outEnc.Substring(5500,($outEnc.Length - 5500))
+		    Upload-Piece -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Piece $piece -Count $i
+        }
+        $outEnc = $lastp
+    }
+	Upload-Piece -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Piece $outEnc -Count ($nop + 1) 
+	
+    $remoteScript = @"
+    `$getB64strings = Get-WmiObject -Namespace $Namespace -Query "SELECT Name FROM __Namespace WHERE Name like '$Tag%'" | % {`$_.Name} | Sort-Object
+    foreach (`$line in `$getB64strings) {
+		`$cleanString = `$line.Remove(0,14) -replace [char]0x00F3,[char]0x002B -replace '_','/'
+		`$reconstructed += `$cleanString
+    }
+    Try { `$DecodedByteArray = [System.Convert]::FromBase64String(`$reconstructed) }
+    Catch [System.Management.Automation.MethodInvocationException] {
+	    Try { `$DecodedByteArray = [System.Convert]::FromBase64String(`$reconstructed + "=") }
+	    Catch [System.Management.Automation.MethodInvocationException] {
+		    `$DecodedByteArray = [System.Convert]::FromBase64String(`$reconstructed + "==") }
+	    Finally {}
+    }
+    Finally { [System.IO.File]::WriteAllBytes("$RemoteDestination", `$DecodedByteArray) }
+"@
+    $scriptBlock = [scriptblock]::Create($remoteScript)
+    $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock $scriptBlock
+    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $encPosh    
 }
 
 function Upload-WmiScript {
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string[]]$ComputerName,
+    [string[]]
+    $ComputerName,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
     [ValidateNotNull()]
     [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Namespace = "default",
+    [string]
+    $Namespace = "root\default",
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    
     [Parameter(Mandatory = $True)]
-    [string]$LocalPath
+    [string]
+    $LocalPath
 ) #End Param
 
     $encScript = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($LocalPath))
-    $outEnc = $outEnc -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
+    $outEnc = $encScript -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
     $nop = [Math]::Floor($outEnc.Length / 5500)
     if ($outEnc.Length -gt 5500) {
         $lastp = $outEnc.Substring($outEnc.Length - ($outEnc.Length % 5500), ($outEnc.Length % 5500))
@@ -238,7 +338,7 @@ Param (
     Catch [System.Management.Automation.MethodInvocationException] {
 	    Try { `$DecodedByteArray = [System.Convert]::FromBase64String(`$reconstructed + "=") }
 	    Catch [System.Management.Automation.MethodInvocationException] {
-		    `$DecodeBytedArray = [System.Convert]::FromBase64String(`$reconstructed + "==") }
+		    `$DecodedByteArray = [System.Convert]::FromBase64String(`$reconstructed + "==") }
 	    Finally {}
     }
     Finally { `$ScriptBlock = [System.Text.Encoding]::UTF8.GetString(`$DecodedByteArray) }
@@ -248,19 +348,31 @@ Param (
 function Download-WmiFile {
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string[]]$ComputerName,
+    [string[]]
+    $ComputerName,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
     [ValidateNotNull()]
     [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Namespace = "default",
+    [string]
+    $Namespace = "root\default",
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    
     [Parameter(Mandatory = $True)]
-    [string]$RemotePath,
+    [string]
+    $RemotePath,
+    
     [Parameter(Mandatory = $True)]
-    [string]$LocalDestination
+    [string]
+    $LocalDestination
+
 ) #End Param
 
     $remoteScript = @"
@@ -272,7 +384,7 @@ Param (
 	    `$piece = `$tag + `$piece 
 	    `$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$piece}
     }
-	`$encFile = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($Path))
+	`$encFile = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$RemotePath"))
     `$encFile = `$encFile -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
     `$nop = [Math]::Floor(`$encFile.Length / 5500)
     if (`$encFile.Length -gt 5500) {
@@ -398,15 +510,23 @@ http://www.secabstraction.com/
 function Get-WmiFile {
 Param (	
     [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string[]]$ComputerName,
+    [string[]]
+    $ComputerName,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
     [ValidateNotNull()]
     [System.Management.Automation.PSCredential]
-    [System.Management.Automation.Credential()]$UserName = [System.Management.Automation.PSCredential]::Empty,
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Namespace = "default",
+    [string]
+    $Namespace = "root\default",
+    
     [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
-    [string]$Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    
     [Parameter(Mandatory = $True)]
     [string]$Path
 ) # End Param
@@ -424,5 +544,4 @@ Param (
 	    Finally {}
     }
     Finally { [System.IO.File]::WriteAllBytes($Path, $DecodedByteArray) }
-
 }
