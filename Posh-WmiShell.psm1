@@ -182,16 +182,9 @@ http://www.secabstraction.com/
 			$cleanString = $line.Remove(0,14) -replace [char]0x00F3,[char]0x002B -replace '_','/'
 			$reconstructed += $cleanString
         }
-        # Decode base64 padded string and remove front side spaces
-	    Try { $decodeString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($reconstructed)) }
-        Catch [System.Management.Automation.MethodInvocationException] {
-	        Try { $decodeString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($reconstructed + "=")) }
-	        Catch [System.Management.Automation.MethodInvocationException] {
-		        $decodeString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($reconstructed + "==")) }
-	        Finally {}
-	    }
-        Finally { Write-Host $decodeString }
-        
+        if ($reconstructed.length % 4 -ne 0) { $reconstructed += ("===").Substring(0,4 - ($reconstructed.Length % 4)) }
+        $decodeString = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($reconstructed))
+        Write-Host $decodeString
     }
 	
 
@@ -199,14 +192,9 @@ http://www.secabstraction.com/
         #Decode single line Base64
 		$getStrings = $getOutput.Name
 		$cleanString = $getStrings.Remove(0,14) -replace [char]0x00F3,[char]0x002B -replace '_','/'
-		Try { $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString)) }
-		Catch [System.Management.Automation.MethodInvocationException] {
-			Try { $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString + "=")) }
-			Catch [System.Management.Automation.MethodInvocationException] {
-			    $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString + "==")) }
-			Finally {}
-		}
-		Finally { Write-Host $decodedOutput }    
+		if ($cleanString.length % 4 -ne 0) { $cleanString += ("===").Substring(0,4 - ($cleanString.Length % 4)) }
+        $decodedOutput = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($cleanString))
+		Write-Host $decodedOutput    
     }
 }
 function Out-EncodedCommand {
