@@ -1,7 +1,7 @@
 Getting Started
 ===============
 1. Navigate to the directory containing Create-WmiShell.ps1 and the 2 VB scripts
-2. Import-Module .\Create-WmiShell.ps1
+2. Import-Module .\Create-WmiShell.psm1
 3. New-WmiShell -ComputerName <hostname or IP> -UserName <Domain\Administrator> -UploadTo <file path> -Encoding <Base64 or Hex>
 4. List-WmiShells
 5. Enter-WmiShell -Session <# from List-WmiShells>
@@ -12,5 +12,4 @@ TODOs
 ===============
 1. Test functionality against (multiple) target host file
 2. Better implementation of List-WmiShells function
-3. Write Close-WmiShell function
-4. Maybe make the hex encoding a little sneakier
+3. Test Close-WmiShell function
